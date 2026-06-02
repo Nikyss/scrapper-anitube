@@ -19,6 +19,15 @@ if not exist "node_modules" (
   )
 )
 
+echo Verificando Chromium do Playwright...
+call npx playwright install chromium
+if errorlevel 1 (
+  echo.
+  echo Falha ao instalar/verificar o Chromium do Playwright.
+  pause
+  exit /b 1
+)
+
 call npm start
 
 echo.

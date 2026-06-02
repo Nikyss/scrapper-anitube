@@ -1,4 +1,6 @@
 node_modules/
 output/
 chromium-profile/
+.fetchv-extension/
+chromium-profile-fetchv-test/
 playwright-report/
