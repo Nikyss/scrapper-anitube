@@ -1,7 +1,7 @@
 import { chromium } from 'playwright';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { cp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
@@ -9,6 +9,8 @@ const DEFAULT_URL = 'https://www.anitube.vip/animes-dublado/komi-san-wa-comyusho
 const OUT_DIR = path.resolve('output');
 const PROFILE_DIR = path.resolve('chromium-profile');
 const STAGED_FETCHV_EXTENSION_DIR = path.resolve('.fetchv-extension');
+const DEFAULT_DOWNLOAD_DIR = path.join(process.env.USERPROFILE || process.cwd(), 'Downloads');
+const FETCHV_DOWNLOAD_DIR = path.resolve(process.env.FETCHV_DOWNLOAD_DIR || DEFAULT_DOWNLOAD_DIR);
 const FETCHV_SITE = 'https://fetchv.net';
 const FETCHV_LANG = process.env.FETCHV_LANG || 'pt';
 const FETCHV_CAPTURE_TIMEOUT_MS = Number(process.env.FETCHV_CAPTURE_TIMEOUT_MS || 45000);
@@ -41,6 +43,15 @@ function normalizeUrl(raw) {
 async function pathExists(target) {
   try {
     await readdir(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function fileExists(target) {
+  try {
+    await stat(target);
     return true;
   } catch {
     return false;
@@ -583,6 +594,76 @@ function bytesLabel(size) {
   return `${(value / 1024 / 1024 / 1024).toFixed(2)}G`;
 }
 
+function sanitizeFilename(value, fallback = 'video') {
+  const sanitized = String(value || fallback)
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .replace(/[. ]+$/g, '')
+    .trim();
+  return sanitized || fallback;
+}
+
+function downloadExtensionForItem(item, suggestedFilename = '') {
+  const suggestedExtension = path.extname(suggestedFilename).replace('.', '').toLowerCase();
+  if (suggestedExtension) return suggestedExtension;
+
+  const format = String(item?.format || item?.type || '').toLowerCase();
+  const contentType = String(item?.contentType || '').toLowerCase();
+  const extensions = {
+    '3gp': '3gp',
+    avi: 'avi',
+    flv: 'flv',
+    hls: 'mp4',
+    m3u: 'mp4',
+    m3u8: 'mp4',
+    mkv: 'mkv',
+    mov: 'mov',
+    mp4: 'mp4',
+    ogg: 'ogg',
+    ogv: 'ogv',
+    webm: 'webm',
+    wmv: 'wmv'
+  };
+
+  if (extensions[format]) return extensions[format];
+  if (contentType.includes('webm')) return 'webm';
+  if (contentType.includes('ogg')) return 'ogg';
+  return 'mp4';
+}
+
+function fetchVDownloadFilename(filename, item, suggestedFilename = '') {
+  const safeName = sanitizeFilename(filename || suggestedFilename || item?.name || 'video');
+  if (path.extname(safeName)) return safeName;
+  return `${safeName}.${downloadExtensionForItem(item, suggestedFilename)}`;
+}
+
+async function uniqueDownloadPath(directory, filename) {
+  const extension = path.extname(filename);
+  const basename = path.basename(filename, extension);
+  let candidate = path.join(directory, filename);
+  let counter = 1;
+
+  while (await fileExists(candidate)) {
+    candidate = path.join(directory, `${basename} (${counter})${extension}`);
+    counter += 1;
+  }
+
+  return candidate;
+}
+
+function registerFetchVDownloadSaver(page, item, filename) {
+  page.on('download', async (download) => {
+    try {
+      await mkdir(FETCHV_DOWNLOAD_DIR, { recursive: true });
+      const finalFilename = fetchVDownloadFilename(filename, item, download.suggestedFilename());
+      const targetPath = await uniqueDownloadPath(FETCHV_DOWNLOAD_DIR, finalFilename);
+      await download.saveAs(targetPath);
+      console.log(`Download salvo em: ${targetPath}`);
+    } catch (error) {
+      console.log(`Falha ao salvar download renomeado: ${error.message}`);
+    }
+  });
+}
+
 async function writeFetchVQueue(bridgeWorker, item, row, initiator) {
   const queue = {
     ...item,
@@ -619,6 +700,7 @@ async function openFetchVDownloaderTab(context, bridgeWorker, item, row, filenam
   await writeFetchVQueue(bridgeWorker, item, row, initiator);
 
   const downloaderPage = await context.newPage();
+  registerFetchVDownloadSaver(downloaderPage, item, filename);
   await downloaderPage.goto(fetchVDownloaderUrl(item), {
     waitUntil: 'domcontentloaded',
     timeout: 45000
@@ -746,6 +828,7 @@ async function main() {
   }
 
   const launchOptions = {
+    acceptDownloads: true,
     headless: false,
     viewport: { width: 1366, height: 768 },
     channel: 'chrome'

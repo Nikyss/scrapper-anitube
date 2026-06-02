@@ -58,6 +58,7 @@ O Chromium do Playwright e usado no modo FetchV porque o Chrome Stable pode bloq
 - `FETCHV_EXTENSION_ID=nfmmmhanepmpifddlkkmihkalkoekpfd`: informa manualmente o ID, se necessario.
 - `FETCHV_KEEP_SOURCE_TABS=1`: mantem abertas tambem as abas temporarias usadas para capturar os videos.
 - `FETCHV_CAPTURE_TIMEOUT_MS=45000`: altera o tempo de espera pela captura de cada episodio.
+- `FETCHV_DOWNLOAD_DIR=C:\Users\seu-usuario\Downloads`: altera onde os downloads finais do FetchV serao salvos.
 - `ANITUBE_URL=https://...`: informa a URL do anime sem perguntar.
 - `QUALITY_CHOICE=2`: escolhe a qualidade sem perguntar.
 - `CLEAN_OUTPUT=s`: limpa a pasta `output` antes de comecar.
@@ -81,3 +82,5 @@ npx playwright install chromium
 ```
 
 Se algum episodio nao for capturado pela FetchV, aumente `FETCHV_CAPTURE_TIMEOUT_MS` ou rode novamente mantendo as abas fonte abertas com `FETCHV_KEEP_SOURCE_TABS=1` para conferir a pagina que a extensao tentou capturar.
+
+Se o historico do Chromium mostrar nomes aleatorios de `blob:https://fetchv.net`, o script tambem escuta esses downloads e salva uma copia renomeada em `FETCHV_DOWNLOAD_DIR` ou na pasta `Downloads` do Windows.
