@@ -1,0 +1,4 @@
+node_modules/
+output/
+chromium-profile/
+playwright-report/
