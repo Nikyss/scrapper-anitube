@@ -17,6 +17,8 @@ O modo FetchV nao clica no botao final de download. Ele apenas deixa as abas pre
 - Google Chrome instalado com a extensao FetchV.
 - A extensao FetchV instalada no Chrome:
   `https://chromewebstore.google.com/detail/fetchv-video-downloader-f/nfmmmhanepmpifddlkkmihkalkoekpfd?hl=pt-BR`
+- Opcional, mas recomendado: Dark Reader instalado no Chrome:
+  `https://chromewebstore.google.com/detail/dark-reader/eimadpbcbfnmbkopoojfekhnkhdbieeh?hl=pt-BR`
 
 ## Uso
 
@@ -49,7 +51,7 @@ Quando a opcao do FetchV for escolhida, o Chromium abre a URL capturada de cada 
 
 Nao precisa instalar a FetchV manualmente no Chromium do Playwright. O script encontra a extensao instalada no seu Chrome, copia para `.fetchv-extension` sem a pasta `_metadata` da Web Store e carrega essa copia limpa no Chromium automatizado.
 
-O Chromium do Playwright e usado no modo FetchV porque o Chrome Stable pode bloquear extensoes carregadas como `unpacked` em alguns ambientes.
+O Chromium do Playwright e usado no modo FetchV porque o Chrome Stable pode bloquear extensoes carregadas como `unpacked` em alguns ambientes. Se o Dark Reader estiver instalado no Chrome, ele tambem e copiado para `.dark-reader-extension` e carregado junto, ja ativo por padrao em todos os sites.
 
 ## Variaveis uteis
 
@@ -59,6 +61,7 @@ O Chromium do Playwright e usado no modo FetchV porque o Chrome Stable pode bloq
 - `FETCHV_KEEP_SOURCE_TABS=1`: mantem abertas tambem as abas temporarias usadas para capturar os videos.
 - `FETCHV_CAPTURE_TIMEOUT_MS=45000`: altera o tempo de espera pela captura de cada episodio.
 - `FETCHV_DOWNLOAD_DIR=C:\Users\seu-usuario\Downloads`: altera onde os downloads finais do FetchV serao salvos.
+- `DARK_READER_EXTENSION_PATH=C:\caminho\da\extensao`: informa manualmente a pasta do Dark Reader.
 - `ANITUBE_URL=https://...`: informa a URL do anime sem perguntar.
 - `QUALITY_CHOICE=2`: escolhe a qualidade sem perguntar.
 - `CLEAN_OUTPUT=s`: limpa a pasta `output` antes de comecar.
@@ -74,6 +77,8 @@ npm start
 ## Solucao de problemas
 
 Se a FetchV nao for encontrada automaticamente, confira se ela esta instalada no Chrome. Tambem e possivel informar a pasta manualmente com `FETCHV_EXTENSION_PATH`.
+
+Se a URL do AniTube falhar com `net::ERR_NAME_NOT_RESOLVED`, o Chromium nao conseguiu resolver o dominio pela rede/DNS atual. O script tenta `www.anitube.vip` e `anitube.vip` automaticamente; se os dois falharem, teste trocar o DNS, VPN/proxy ou abrir a pagina no Chrome normal antes de rodar de novo.
 
 Se aparecer erro de Chromium ausente, rode:
 

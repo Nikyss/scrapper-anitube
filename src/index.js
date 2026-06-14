@@ -9,9 +9,12 @@ const DEFAULT_URL = 'https://www.anitube.vip/animes-dublado/komi-san-wa-comyusho
 const OUT_DIR = path.resolve('output');
 const PROFILE_DIR = path.resolve('chromium-profile');
 const STAGED_FETCHV_EXTENSION_DIR = path.resolve('.fetchv-extension');
+const STAGED_DARK_READER_EXTENSION_DIR = path.resolve('.dark-reader-extension');
 const DEFAULT_DOWNLOAD_DIR = path.join(process.env.USERPROFILE || process.cwd(), 'Downloads');
 const FETCHV_DOWNLOAD_DIR = path.resolve(process.env.FETCHV_DOWNLOAD_DIR || DEFAULT_DOWNLOAD_DIR);
 const FETCHV_SITE = 'https://fetchv.net';
+const FETCHV_EXTENSION_ID = 'nfmmmhanepmpifddlkkmihkalkoekpfd';
+const DARK_READER_EXTENSION_ID = 'eimadpbcbfnmbkopoojfekhnkhdbieeh';
 const FETCHV_LANG = process.env.FETCHV_LANG || 'pt';
 const FETCHV_CAPTURE_TIMEOUT_MS = Number(process.env.FETCHV_CAPTURE_TIMEOUT_MS || 45000);
 
@@ -38,6 +41,39 @@ function normalizeUrl(raw) {
   const url = new URL(value);
   url.hash = '';
   return url.toString().replace(/\/$/, '');
+}
+
+function alternateHostUrl(rawUrl) {
+  const url = new URL(rawUrl);
+  if (url.hostname === 'www.anitube.vip') {
+    url.hostname = 'anitube.vip';
+    return url.toString().replace(/\/$/, '');
+  }
+  if (url.hostname === 'anitube.vip') {
+    url.hostname = 'www.anitube.vip';
+    return url.toString().replace(/\/$/, '');
+  }
+  return null;
+}
+
+function summarizeNavigationError(error) {
+  const message = error?.message || String(error);
+  const networkError = message.match(/net::([A-Z0-9_]+)/);
+  if (networkError) return `net::${networkError[1]}`;
+  return message.split(/\r?\n/)[0];
+}
+
+async function gotoWithFallback(page, url, options) {
+  const errors = [];
+  for (const candidate of [url, alternateHostUrl(url)].filter(Boolean)) {
+    try {
+      return await page.goto(candidate, options);
+    } catch (error) {
+      errors.push(`${candidate}: ${summarizeNavigationError(error)}`);
+    }
+  }
+
+  throw new Error(errors.join(' | '));
 }
 
 async function pathExists(target) {
@@ -78,8 +114,7 @@ function extensionIdFromKey(key) {
   }
 }
 
-function inferExtensionId(extensionPath, manifest) {
-  const envId = process.env.FETCHV_EXTENSION_ID;
+function inferExtensionId(extensionPath, manifest, envId = '') {
   if (isChromeExtensionId(envId)) return envId.trim();
 
   const candidates = [
@@ -98,21 +133,20 @@ async function readExtensionManifest(extensionPath) {
     .catch(() => null);
 }
 
-function fetchVExtensionInfo(extensionPath, manifest) {
+function extensionInfo(extensionPath, manifest, envId = '') {
   return {
-    id: inferExtensionId(extensionPath, manifest),
+    id: inferExtensionId(extensionPath, manifest, envId),
     manifest,
     path: extensionPath,
     sourcePath: extensionPath
   };
 }
 
-async function stageFetchVExtension(extensionInfo) {
-  if (!extensionInfo) return null;
+async function stageExtension(info, targetPath) {
+  if (!info) return null;
 
-  const sourcePath = path.resolve(extensionInfo.path);
-  const targetPath = STAGED_FETCHV_EXTENSION_DIR;
-  if (sourcePath === targetPath) return extensionInfo;
+  const sourcePath = path.resolve(info.path);
+  if (sourcePath === targetPath) return info;
 
   await rm(targetPath, { recursive: true, force: true });
   await mkdir(targetPath, { recursive: true });
@@ -123,21 +157,24 @@ async function stageFetchVExtension(extensionInfo) {
 
   const manifest = await readExtensionManifest(targetPath);
   return {
-    ...extensionInfo,
-    id: inferExtensionId(targetPath, manifest) || extensionInfo.id,
+    ...info,
+    id: inferExtensionId(targetPath, manifest, info.id) || info.id,
     manifest,
     path: targetPath,
     sourcePath
   };
 }
 
-async function findFetchVExtension() {
-  if (process.env.FETCHV_EXTENSION_PATH && await pathExists(process.env.FETCHV_EXTENSION_PATH)) {
-    const manifest = await readExtensionManifest(process.env.FETCHV_EXTENSION_PATH);
-    return fetchVExtensionInfo(process.env.FETCHV_EXTENSION_PATH, manifest);
-  }
+async function stageFetchVExtension(info) {
+  return stageExtension(info, STAGED_FETCHV_EXTENSION_DIR);
+}
 
-  const extensionsRoot = path.join(
+async function stageDarkReaderExtension(info) {
+  return stageExtension(info, STAGED_DARK_READER_EXTENSION_DIR);
+}
+
+function chromeExtensionsRoot() {
+  return path.join(
     process.env.LOCALAPPDATA || '',
     'Google',
     'Chrome',
@@ -145,6 +182,37 @@ async function findFetchVExtension() {
     'Default',
     'Extensions'
   );
+}
+
+async function findChromeExtensionById(extensionId, envPath = '') {
+  if (envPath && await pathExists(envPath)) {
+    const manifest = await readExtensionManifest(envPath);
+    return extensionInfo(envPath, manifest, extensionId);
+  }
+
+  const extensionDir = path.join(chromeExtensionsRoot(), extensionId);
+  if (!await pathExists(extensionDir)) return null;
+
+  const versions = await readdir(extensionDir).catch(() => []);
+  const candidates = [];
+  for (const version of versions) {
+    const versionDir = path.join(extensionDir, version);
+    const manifest = await readExtensionManifest(versionDir);
+    if (manifest) {
+      candidates.push(extensionInfo(versionDir, manifest, extensionId));
+    }
+  }
+
+  return candidates.sort((a, b) => String(b.manifest?.version || '').localeCompare(String(a.manifest?.version || ''), undefined, { numeric: true }))[0] || null;
+}
+
+async function findFetchVExtension() {
+  if (process.env.FETCHV_EXTENSION_PATH && await pathExists(process.env.FETCHV_EXTENSION_PATH)) {
+    const manifest = await readExtensionManifest(process.env.FETCHV_EXTENSION_PATH);
+    return extensionInfo(process.env.FETCHV_EXTENSION_PATH, manifest, process.env.FETCHV_EXTENSION_ID || FETCHV_EXTENSION_ID);
+  }
+
+  const extensionsRoot = chromeExtensionsRoot();
 
   if (!await pathExists(extensionsRoot)) return null;
 
@@ -154,7 +222,7 @@ async function findFetchVExtension() {
       const versionDir = path.join(extensionDir, version);
       const manifest = await readExtensionManifest(versionDir);
       if (manifest?.short_name === 'FetchV' || manifest?.homepage_url === 'https://fetchv.net/') {
-        return fetchVExtensionInfo(versionDir, manifest);
+        return extensionInfo(versionDir, manifest, process.env.FETCHV_EXTENSION_ID || FETCHV_EXTENSION_ID);
       }
     }
   }
@@ -162,9 +230,21 @@ async function findFetchVExtension() {
   return null;
 }
 
+async function findDarkReaderExtension() {
+  return findChromeExtensionById(
+    process.env.DARK_READER_EXTENSION_ID || DARK_READER_EXTENSION_ID,
+    process.env.DARK_READER_EXTENSION_PATH || ''
+  );
+}
+
 function pageUrl(baseUrl, pageNumber) {
   if (pageNumber <= 0) return baseUrl;
   return `${baseUrl}/page/${pageNumber}`;
+}
+
+function pageNumberForIndex(pageIndex) {
+  if (pageIndex <= 0) return 0;
+  return pageIndex + 1;
 }
 
 function parseEpisodeNumber(text, href) {
@@ -197,13 +277,19 @@ async function collectEpisodes(page, baseUrl) {
 
   let emptyPages = 0;
 
-  for (let pageNumber = 0; pageNumber <= 200; pageNumber += 1) {
+  for (let pageIndex = 0; pageIndex <= 200; pageIndex += 1) {
+    const pageNumber = pageNumberForIndex(pageIndex);
     const url = pageUrl(baseUrl, pageNumber);
     if (seenPages.has(url)) break;
     seenPages.add(url);
 
     console.log(`Lendo pagina ${pageNumber === 0 ? 'base' : pageNumber}: ${url}`);
-    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => null);
+    const response = await gotoWithFallback(page, url, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch((error) => {
+      if (pageNumber === 0) {
+        throw new Error(`Nao consegui abrir ${url}. Detalhe do navegador: ${error.message}`);
+      }
+      return null;
+    });
     if (!response || response.status() >= 400) {
       if (pageNumber === 0) throw new Error(`Nao consegui abrir ${url}`);
       break;
@@ -246,7 +332,7 @@ async function collectEpisodes(page, baseUrl) {
       const next = [...document.querySelectorAll('a[href]')].some((a) => {
         const text = a.textContent?.trim().toLowerCase() || '';
         const rel = a.getAttribute('rel') || '';
-        return rel.includes('next') || ['proximo', 'próximo', 'next', '»', '›'].includes(text);
+        return rel.includes('next') || /(^|\s)(proximo|pr[oó]ximo|next)(\s|$)|[»›]/i.test(text);
       });
       return next;
     });
@@ -299,7 +385,7 @@ async function extractQualityOptions(page) {
 
 async function detectQualityOptions(page, episodeUrl) {
   console.log(`Detectando qualidades no primeiro episodio: ${episodeUrl}`);
-  await page.goto(episodeUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+  await gotoWithFallback(page, episodeUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
   await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
   const options = await extractQualityOptions(page);
   return options.map((option) => ({
@@ -411,7 +497,7 @@ async function extractSelectedQualitySource(page, quality) {
 
 async function getSelectedQualitySource(page, episode, quality) {
   console.log(`Selecionando ${quality.label} no episodio ${episode.url}`);
-  await page.goto(episode.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+  await gotoWithFallback(page, episode.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
   await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
   await activateQuality(page, quality);
   return extractSelectedQualitySource(page, quality);
@@ -728,7 +814,7 @@ async function prepareFetchVDownloaderTabs(context, rows, selectedQuality, exten
     const capturePage = await context.newPage();
 
     try {
-      await capturePage.goto(captureUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+      await gotoWithFallback(capturePage, captureUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
       await capturePage.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
 
       const bridgeWorker = await getFetchVBridgeWorker(context, extensionId);
@@ -741,7 +827,7 @@ async function prepareFetchVDownloaderTabs(context, rows, selectedQuality, exten
 
       if (!selected && row.sourceType === 'direct-video' && row.episodeUrl) {
         console.log(`FetchV: tentando capturar o episodio ${filename} pela pagina original.`);
-        await capturePage.goto(row.episodeUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+        await gotoWithFallback(capturePage, row.episodeUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
         await capturePage.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
         await activateQuality(capturePage, selectedQuality);
         await nudgeMediaPlayback(capturePage);
@@ -820,13 +906,23 @@ async function main() {
   const animeUrl = normalizeUrl(process.env.ANITUBE_URL || await ask(`URL do anime [${DEFAULT_URL}]: `, DEFAULT_URL));
   const foundFetchVExtension = await findFetchVExtension();
   const fetchVExtension = await stageFetchVExtension(foundFetchVExtension);
+  const foundDarkReaderExtension = await findDarkReaderExtension();
+  const darkReaderExtension = await stageDarkReaderExtension(foundDarkReaderExtension);
   if (fetchVExtension) {
     console.log(`FetchV encontrada em: ${fetchVExtension.sourcePath}`);
     console.log(`FetchV preparada em: ${fetchVExtension.path}${fetchVExtension.id ? ` (${fetchVExtension.id})` : ''}`);
   } else {
     console.log('FetchV nao foi encontrada automaticamente. Use FETCHV_EXTENSION_PATH para informar a pasta da extensao.');
   }
+  if (darkReaderExtension) {
+    console.log(`Dark Reader encontrado em: ${darkReaderExtension.sourcePath}`);
+    console.log(`Dark Reader preparado em: ${darkReaderExtension.path}${darkReaderExtension.id ? ` (${darkReaderExtension.id})` : ''}`);
+  } else {
+    console.log('Dark Reader nao foi encontrado automaticamente. Instale no Chrome ou use DARK_READER_EXTENSION_PATH.');
+  }
 
+  const extensionsToLoad = [fetchVExtension, darkReaderExtension].filter(Boolean);
+  const extensionPaths = extensionsToLoad.map((extension) => extension.path).join(',');
   const launchOptions = {
     acceptDownloads: true,
     headless: false,
@@ -834,14 +930,14 @@ async function main() {
     channel: 'chrome'
   };
 
-  if (fetchVExtension) {
+  if (extensionsToLoad.length) {
     delete launchOptions.channel;
     launchOptions.ignoreDefaultArgs = ['--disable-extensions'];
     launchOptions.args = [
-      `--disable-extensions-except=${fetchVExtension.path}`,
-      `--load-extension=${fetchVExtension.path}`
+      `--disable-extensions-except=${extensionPaths}`,
+      `--load-extension=${extensionPaths}`
     ];
-    console.log('Usando Chromium do Playwright para carregar a FetchV.');
+    console.log(`Usando Chromium do Playwright para carregar ${extensionsToLoad.length} extensao(oes).`);
   }
 
   const context = await chromium.launchPersistentContext(PROFILE_DIR, {
@@ -850,7 +946,7 @@ async function main() {
   });
 
   const page = context.pages()[0] || await context.newPage();
-  const fetchVExtensionId = fetchVExtension?.id || await detectLoadedExtensionId(context);
+  const fetchVExtensionId = fetchVExtension?.id;
   if (fetchVExtension && !fetchVExtensionId) {
     console.log('Nao consegui descobrir o ID da FetchV; a preparacao automatica das abas pode ficar indisponivel.');
   }
