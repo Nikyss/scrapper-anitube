@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import { createInterface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { Resolver } from 'node:dns/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 
@@ -17,6 +18,10 @@ const FETCHV_EXTENSION_ID = 'nfmmmhanepmpifddlkkmihkalkoekpfd';
 const DARK_READER_EXTENSION_ID = 'eimadpbcbfnmbkopoojfekhnkhdbieeh';
 const FETCHV_LANG = process.env.FETCHV_LANG || 'pt';
 const FETCHV_CAPTURE_TIMEOUT_MS = Number(process.env.FETCHV_CAPTURE_TIMEOUT_MS || 45000);
+const PUBLIC_DNS_SERVERS = (process.env.ANITUBE_PUBLIC_DNS_SERVERS || '1.1.1.1,8.8.8.8')
+  .split(',')
+  .map((server) => server.trim())
+  .filter(Boolean);
 
 const rl = createInterface({ input, output });
 
@@ -61,6 +66,46 @@ function summarizeNavigationError(error) {
   const networkError = message.match(/net::([A-Z0-9_]+)/);
   if (networkError) return `net::${networkError[1]}`;
   return message.split(/\r?\n/)[0];
+}
+
+function isAnitubeHost(hostname) {
+  return hostname === 'anitube.vip' || hostname === 'www.anitube.vip';
+}
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+async function resolvePublicIPv4(hostname) {
+  if (process.env.ANITUBE_HOST_IP) return process.env.ANITUBE_HOST_IP.trim();
+  if (!PUBLIC_DNS_SERVERS.length) return '';
+
+  const resolver = new Resolver();
+  resolver.setServers(PUBLIC_DNS_SERVERS);
+  const addresses = await resolver.resolve4(hostname).catch(() => []);
+  return addresses.find((address) => /^\d{1,3}(\.\d{1,3}){3}$/.test(address)) || '';
+}
+
+async function buildAnitubeHostResolverRules(rawUrl) {
+  if (process.env.ANITUBE_DISABLE_DNS_FALLBACK === '1') return '';
+
+  const url = new URL(rawUrl);
+  if (!isAnitubeHost(url.hostname)) return '';
+
+  const alternate = alternateHostUrl(rawUrl);
+  const hostnames = unique([
+    url.hostname,
+    alternate ? new URL(alternate).hostname : ''
+  ]);
+
+  const rules = [];
+  for (const hostname of hostnames) {
+    const address = await resolvePublicIPv4(hostname);
+    if (address) rules.push(`MAP ${hostname} ${address}`);
+  }
+
+  if (!rules.length) return '';
+  return `${rules.join(',')},EXCLUDE localhost`;
 }
 
 async function gotoWithFallback(page, url, options) {
@@ -904,6 +949,7 @@ async function main() {
   }
 
   const animeUrl = normalizeUrl(process.env.ANITUBE_URL || await ask(`URL do anime [${DEFAULT_URL}]: `, DEFAULT_URL));
+  const anitubeHostResolverRules = await buildAnitubeHostResolverRules(animeUrl);
   const foundFetchVExtension = await findFetchVExtension();
   const fetchVExtension = await stageFetchVExtension(foundFetchVExtension);
   const foundDarkReaderExtension = await findDarkReaderExtension();
@@ -923,6 +969,7 @@ async function main() {
 
   const extensionsToLoad = [fetchVExtension, darkReaderExtension].filter(Boolean);
   const extensionPaths = extensionsToLoad.map((extension) => extension.path).join(',');
+  const chromiumArgs = [];
   const launchOptions = {
     acceptDownloads: true,
     headless: false,
@@ -933,16 +980,20 @@ async function main() {
   if (extensionsToLoad.length) {
     delete launchOptions.channel;
     launchOptions.ignoreDefaultArgs = ['--disable-extensions'];
-    launchOptions.args = [
+    chromiumArgs.push(
       `--disable-extensions-except=${extensionPaths}`,
       `--load-extension=${extensionPaths}`
-    ];
+    );
     console.log(`Usando Chromium do Playwright para carregar ${extensionsToLoad.length} extensao(oes).`);
+  }
+  if (anitubeHostResolverRules) {
+    chromiumArgs.push(`--host-resolver-rules=${anitubeHostResolverRules}`);
+    console.log(`Fallback DNS do AniTube ativo: ${anitubeHostResolverRules}`);
   }
 
   const context = await chromium.launchPersistentContext(PROFILE_DIR, {
     ...launchOptions,
-    args: launchOptions.args || []
+    args: chromiumArgs
   });
 
   const page = context.pages()[0] || await context.newPage();

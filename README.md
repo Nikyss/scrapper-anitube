@@ -62,6 +62,9 @@ O Chromium do Playwright e usado no modo FetchV porque o Chrome Stable pode bloq
 - `FETCHV_CAPTURE_TIMEOUT_MS=45000`: altera o tempo de espera pela captura de cada episodio.
 - `FETCHV_DOWNLOAD_DIR=C:\Users\seu-usuario\Downloads`: altera onde os downloads finais do FetchV serao salvos.
 - `DARK_READER_EXTENSION_PATH=C:\caminho\da\extensao`: informa manualmente a pasta do Dark Reader.
+- `ANITUBE_HOST_IP=104.21.94.138`: forca um IP especifico para `anitube.vip` e `www.anitube.vip`.
+- `ANITUBE_PUBLIC_DNS_SERVERS=1.1.1.1,8.8.8.8`: altera os DNS publicos usados no fallback automatico.
+- `ANITUBE_DISABLE_DNS_FALLBACK=1`: desliga o fallback automatico de DNS do AniTube.
 - `ANITUBE_URL=https://...`: informa a URL do anime sem perguntar.
 - `QUALITY_CHOICE=2`: escolhe a qualidade sem perguntar.
 - `CLEAN_OUTPUT=s`: limpa a pasta `output` antes de comecar.
@@ -78,7 +81,7 @@ npm start
 
 Se a FetchV nao for encontrada automaticamente, confira se ela esta instalada no Chrome. Tambem e possivel informar a pasta manualmente com `FETCHV_EXTENSION_PATH`.
 
-Se a URL do AniTube falhar com `net::ERR_NAME_NOT_RESOLVED`, o Chromium nao conseguiu resolver o dominio pela rede/DNS atual. O script tenta `www.anitube.vip` e `anitube.vip` automaticamente; se os dois falharem, teste trocar o DNS, VPN/proxy ou abrir a pagina no Chrome normal antes de rodar de novo.
+Se a URL do AniTube falhar com `net::ERR_NAME_NOT_RESOLVED`, o Chromium nao conseguiu resolver o dominio pela rede/DNS atual. O script tenta `www.anitube.vip` e `anitube.vip` automaticamente e tambem ativa um fallback que consulta DNS publico para montar `--host-resolver-rules` no Chromium. Se mesmo assim falhar, teste trocar o DNS, VPN/proxy ou informe um IP manualmente com `ANITUBE_HOST_IP`.
 
 Se aparecer erro de Chromium ausente, rode:
 
