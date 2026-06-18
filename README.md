@@ -49,6 +49,8 @@ Esse `.bat` instala as dependencias na primeira execucao e verifica o Chromium d
 
 Quando a opcao do FetchV for escolhida, o Chromium abre a URL capturada de cada episodio, espera a extensao capturar o video, abre a pagina do FetchV (`videodownloader` ou `m3u8downloader`) e renomeia o arquivo para `01`, `02`, `03` e assim por diante. O script nao clica no botao final de download.
 
+Se a extensao nao detectar o player no primeiro carregamento da pagina, o script faz um refresh automatico da aba do video e tenta a captura mais uma vez antes de desistir.
+
 Nao precisa instalar a FetchV manualmente no Chromium do Playwright. O script encontra a extensao instalada no seu Chrome, copia para `.fetchv-extension` sem a pasta `_metadata` da Web Store e carrega essa copia limpa no Chromium automatizado.
 
 O Chromium do Playwright e usado no modo FetchV porque o Chrome Stable pode bloquear extensoes carregadas como `unpacked` em alguns ambientes. Se o Dark Reader estiver instalado no Chrome, ele tambem e copiado para `.dark-reader-extension` e carregado junto, ja ativo por padrao em todos os sites.
@@ -65,6 +67,7 @@ O Chromium do Playwright e usado no modo FetchV porque o Chrome Stable pode bloq
 - `ANITUBE_HOST_IP=104.21.94.138`: forca um IP especifico para `anitube.vip` e `www.anitube.vip`.
 - `ANITUBE_PUBLIC_DNS_SERVERS=1.1.1.1,8.8.8.8`: altera os DNS publicos usados no fallback automatico.
 - `ANITUBE_DISABLE_DNS_FALLBACK=1`: desliga o fallback automatico de DNS do AniTube.
+- `ANITUBE_NAVIGATION_ATTEMPTS=2`: altera quantas vezes cada URL do AniTube e tentada antes de desistir.
 - `ANITUBE_URL=https://...`: informa a URL do anime sem perguntar.
 - `QUALITY_CHOICE=2`: escolhe a qualidade sem perguntar.
 - `CLEAN_OUTPUT=s`: limpa a pasta `output` antes de comecar.

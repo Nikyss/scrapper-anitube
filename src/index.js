@@ -18,6 +18,10 @@ const FETCHV_EXTENSION_ID = 'nfmmmhanepmpifddlkkmihkalkoekpfd';
 const DARK_READER_EXTENSION_ID = 'eimadpbcbfnmbkopoojfekhnkhdbieeh';
 const FETCHV_LANG = process.env.FETCHV_LANG || 'pt';
 const FETCHV_CAPTURE_TIMEOUT_MS = Number(process.env.FETCHV_CAPTURE_TIMEOUT_MS || 45000);
+const RAW_NAVIGATION_ATTEMPTS = Number(process.env.ANITUBE_NAVIGATION_ATTEMPTS || 2);
+const NAVIGATION_ATTEMPTS = Number.isFinite(RAW_NAVIGATION_ATTEMPTS)
+  ? Math.max(1, RAW_NAVIGATION_ATTEMPTS)
+  : 2;
 const PUBLIC_DNS_SERVERS = (process.env.ANITUBE_PUBLIC_DNS_SERVERS || '1.1.1.1,8.8.8.8')
   .split(',')
   .map((server) => server.trim())
@@ -111,10 +115,17 @@ async function buildAnitubeHostResolverRules(rawUrl) {
 async function gotoWithFallback(page, url, options) {
   const errors = [];
   for (const candidate of [url, alternateHostUrl(url)].filter(Boolean)) {
-    try {
-      return await page.goto(candidate, options);
-    } catch (error) {
-      errors.push(`${candidate}: ${summarizeNavigationError(error)}`);
+    for (let attempt = 1; attempt <= NAVIGATION_ATTEMPTS; attempt += 1) {
+      try {
+        return await page.goto(candidate, options);
+      } catch (error) {
+        const summary = summarizeNavigationError(error);
+        errors.push(`${candidate}${NAVIGATION_ATTEMPTS > 1 ? ` tentativa ${attempt}` : ''}: ${summary}`);
+        if (attempt < NAVIGATION_ATTEMPTS || alternateHostUrl(candidate)) {
+          await page.goto('about:blank', { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+          await delay(1000);
+        }
+      }
     }
   }
 
@@ -710,6 +721,32 @@ async function waitForFetchVItems(bridgeWorker, tabId, row, timeoutMs = FETCHV_C
   return lastItems;
 }
 
+async function captureFetchVItemsWithRefresh(page, bridgeWorker, tabId, row, options = {}) {
+  const {
+    beforeCapture,
+    contextLabel = row.filename || row.title || row.episodeUrl || 'episodio'
+  } = options;
+
+  const runCapture = async () => {
+    if (beforeCapture) await beforeCapture();
+    await nudgeMediaPlayback(page);
+    const items = await waitForFetchVItems(bridgeWorker, tabId, row);
+    return {
+      items,
+      selected: selectFetchVItem(items, row)
+    };
+  };
+
+  let result = await runCapture();
+  if (result.selected) return result;
+
+  console.log(`FetchV: nada capturado em ${contextLabel}; atualizando a pagina e tentando de novo.`);
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 45000 });
+  await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+  result = await runCapture();
+  return result;
+}
+
 function fetchVDownloaderUrl(item) {
   const route = String(item?.type || '').toLowerCase() === 'hls'
     ? 'm3u8downloader'
@@ -866,18 +903,30 @@ async function prepareFetchVDownloaderTabs(context, rows, selectedQuality, exten
       const marker = `[fetchv-${Date.now()}-${index}]`;
       const tab = await getChromeTabForPage(bridgeWorker, capturePage, marker);
 
-      await nudgeMediaPlayback(capturePage);
-      let items = await waitForFetchVItems(bridgeWorker, tab.id, row);
-      let selected = selectFetchVItem(items, row);
+      let { items, selected } = await captureFetchVItemsWithRefresh(
+        capturePage,
+        bridgeWorker,
+        tab.id,
+        row,
+        { contextLabel: `${filename} (${captureUrl})` }
+      );
 
       if (!selected && row.sourceType === 'direct-video' && row.episodeUrl) {
         console.log(`FetchV: tentando capturar o episodio ${filename} pela pagina original.`);
         await gotoWithFallback(capturePage, row.episodeUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
         await capturePage.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
-        await activateQuality(capturePage, selectedQuality);
-        await nudgeMediaPlayback(capturePage);
-        items = await waitForFetchVItems(bridgeWorker, tab.id, row);
-        selected = selectFetchVItem(items, row);
+        ({ items, selected } = await captureFetchVItemsWithRefresh(
+          capturePage,
+          bridgeWorker,
+          tab.id,
+          row,
+          {
+            contextLabel: `${filename} (${row.episodeUrl})`,
+            beforeCapture: async () => {
+              await activateQuality(capturePage, selectedQuality);
+            }
+          }
+        ));
       }
 
       if (!selected) {
