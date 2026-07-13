@@ -1,4 +1,8 @@
 node_modules/
 output/
 chromium-profile/
+.fetchv-extension/
+.dark-reader-extension/
+.ublock-origin-lite-extension/
+chromium-profile-fetchv-test/
 playwright-report/
